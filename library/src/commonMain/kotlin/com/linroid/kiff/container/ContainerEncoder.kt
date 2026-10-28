@@ -54,7 +54,9 @@ internal class ContainerEncoder(
   private val target: ByteArray = targetSource.bytes
 
   /** Built only if some target region has no counterpart to be indexed against. */
-  private val wholeSourceScanner by lazy { algorithm.scanner(sourceSource) }
+  private var wholeScanner: DeltaScanner? = null
+  private val wholeSourceScanner: DeltaScanner
+    get() = wholeScanner ?: algorithm.scanner(sourceSource).also { wholeScanner = it }
 
   /**
    * Describes the whole target.
@@ -65,6 +67,18 @@ internal class ContainerEncoder(
    * the way.
    */
   fun encode(
+    rootFormat: ContainerFormat?,
+    literals: ByteWriter,
+    recorder: RegionRecorder?
+  ): RegionNode = try {
+    encodeTarget(rootFormat, literals, recorder)
+  } finally {
+    // The bundled scanner holds nothing, but a caller's algorithm may; see [DeltaScanner.close].
+    wholeScanner?.close()
+    wholeScanner = null
+  }
+
+  private fun encodeTarget(
     rootFormat: ContainerFormat?,
     literals: ByteWriter,
     recorder: RegionRecorder?
@@ -123,23 +137,26 @@ internal class ContainerEncoder(
     val groups = Groups(sourceChildren, inherited)
     val encoded = ArrayList<Encoded>(targetChildren.size)
     val costs = ArrayList<RegionCost>(targetChildren.size)
-    for (child in targetChildren) {
-      val before = literals.size
-      val one = encodeChild(child, pairing.counterpartOf(child), groups, literals, depth + 1)
-      encoded.add(one)
-      costs.add(
-        RegionCost(
-          name = child.name,
-          kind = child.kind,
-          encoding = one.node.encoding(),
-          targetBytes = child.size,
-          instructionBytes = one.node.structureBytes(),
-          literalBytes = (literals.size - before).toLong(),
-          children = one.children
+    try {
+      for (child in targetChildren) {
+        val before = literals.size
+        val one = encodeChild(child, pairing.counterpartOf(child), groups, literals, depth + 1)
+        encoded.add(one)
+        costs.add(
+          RegionCost(
+            name = child.name,
+            kind = child.kind,
+            encoding = one.node.encoding(),
+            targetBytes = child.size,
+            instructionBytes = one.node.structureBytes(),
+            literalBytes = (literals.size - before).toLong(),
+            children = one.children
+          )
         )
-      )
+      }
+    } finally {
+      groups.close()
     }
-    groups.close()
     return Built(RegionNode.Composite(coalesce(encoded)), costs)
   }
 
@@ -615,12 +632,11 @@ internal class ContainerEncoder(
   /** Pairs target children to source children: by name, then by content, then by the format. */
   private class Pairing(private val format: ContainerFormat, private val source: List<Child>) {
     private val byName = source.associateBy { it.name }
+    // The first child with each key: equal keys are the same content, so any of them would do.
     private val byContent: Map<Any, Child> = buildMap {
-      val duplicated = HashSet<Any>()
       for (child in source) {
         val key = child.contentKey ?: continue
-        if (!duplicated.add(key)) continue
-        if (put(key, child) != null) remove(key)
+        if (key !in this) put(key, child)
       }
     }
 

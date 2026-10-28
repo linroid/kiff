@@ -1,12 +1,14 @@
 package com.linroid.kiff.io
 
 import com.linroid.kiff.Kiff
+import com.linroid.kiff.KiffException
 import java.io.File
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class FileSourceJvmTest {
@@ -119,6 +121,14 @@ class FileSourceJvmTest {
     assertEquals(target.size.toLong(), created.targetSize)
     Kiff.applyPatch(sourceFile.path, patchFile.path, outputFile.path)
     assertContentEquals(target, outputFile.readBytes())
+  }
+
+  @Test
+  fun aDirectoryIsRefusedWhenOpened() {
+    // Opening a directory succeeds on Linux and macOS and only the first read fails, which would
+    // surface partway through a create or an apply as a raw I/O error.
+    val failure = assertFailsWith<KiffException.UnsupportedInput> { fileSource(dir.path) }
+    assertTrue("directory" in failure.message!!, failure.message)
   }
 
   @Test

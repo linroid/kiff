@@ -372,6 +372,8 @@ class UnifiedDiffTest {
     assertEquals("odd\"na\\me\n", patch.targetName)
     val quoted = "--- \"\\303\\274n\\303\\257code\"\n+++ b\n"
     assertEquals("ünïcode", UnifiedDiff.parse(quoted).sourceName)
+    // Three octal digits can say more than a byte holds; git refuses those too.
+    assertFailsWith<KiffException.InvalidPatch> { UnifiedDiff.parse("--- \"\\777\"\n+++ b\n") }
   }
 
   @Test

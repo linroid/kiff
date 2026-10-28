@@ -19,7 +19,9 @@ public fun fileSource(path: String): SeekableSource = try {
   val file = path.toPath()
   // Followed through any symlink, which describes itself rather than what it points at.
   val metadata = systemFileSystem.metadataOrNull(systemFileSystem.canonicalize(file))
-  if (metadata != null && !metadata.isRegularFile && !metadata.isDirectory) {
+  // Found out here: opening a directory succeeds on Linux and macOS, and only the first read fails.
+  if (metadata?.isDirectory == true) throw IOException("it is a directory")
+  if (metadata != null && !metadata.isRegularFile) {
     // A pipe's size is what happens to be buffered in it - nothing at all on Linux - so trusting it
     // would make a patch for an empty file and report success.
     ByteArraySource(readToEnd(file, path))

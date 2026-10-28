@@ -68,6 +68,24 @@ class KiffFilesTest {
   }
 
   @Test
+  fun aLinkToNothingIsReplacedLikeAMissingFile() {
+    val dir = scratch ?: return
+    val link = dir / "dangling.bin"
+    try {
+      fs.createSymlink(link, dir / "missing.bin")
+    } catch (e: IOException) {
+      return // a platform or file system without symlinks
+    }
+    // The JVM used to fail here with a bare "no such file": the link exists, but has no file to
+    // resolve to.
+    KiffFiles.writeBytes(link.toString(), byteArrayOf(3))
+    assertEquals(null, fs.metadata(link).symlinkTarget, "the link should have become a file")
+    assertContentEquals(byteArrayOf(3), KiffFiles.readBytes(link.toString()))
+    assertTrue(!fs.exists(dir / "missing.bin"))
+    assertEquals(emptyList(), leftovers(dir))
+  }
+
+  @Test
   fun aDirectoryIsRefusedBeforeAnythingIsWritten() {
     val dir = scratch ?: return
     val folder = dir / "folder"
