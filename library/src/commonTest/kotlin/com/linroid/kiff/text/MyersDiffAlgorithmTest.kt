@@ -253,6 +253,44 @@ class MyersDiffAlgorithmTest {
     assertEquals(algorithm.diff(source, target), wholeOnly.diffWithin(source, target, 4))
   }
 
+  @Test
+  fun linesOnlyOneFileHasAreNotSearchedFor() {
+    // Two files with nothing in common used to cost a step per line pair: the search ran to the
+    // far corner of the grid before concluding that nothing matched.
+    val source = List(100_000) { "old $it" }
+    val target = List(100_000) { "new $it" }
+    val edits = algorithm.diff(source, target)
+    assertEquals(200_000, cost(edits))
+    assertEquals(listOf(Edit.Delete(0, 100_000), Edit.Insert(100_000, target)), edits)
+
+    // Lines both files have are still matched, around the ones only one of them has.
+    val mixed = List(50_000) { if (it % 3 == 0) "kept $it" else "old $it" }
+    val edited = List(50_000) { if (it % 3 == 0) "kept $it" else "new $it" }
+    val mixedEdits = algorithm.diff(mixed, edited)
+    assertEquals(2 * 50_000 - 2 * 16_667, cost(mixedEdits))
+    assertRoundtrip(mixed, edited)
+  }
+
+  @Test
+  fun aSearchPastWhatTheFileSizeWarrantsSettlesForALongerScript() {
+    // Lines from a tiny vocabulary, shuffled: every line is shared, so nothing can be set aside,
+    // and the shortest script is about half the lines, which the exact search finds in time
+    // proportional to the lines times that. The bounded search stops early and splits where it
+    // got to; what it answers restores the target, and is not absurdly long.
+    val random = Random(3)
+    val source = randomLines(random, 60_000)
+    val target = randomLines(random, 60_000)
+    val edits = algorithm.diff(source, target)
+    assertRoundtrip(source, target)
+    assertTrue(cost(edits) < source.size + target.size, "cost ${cost(edits)}")
+    for ((first, second) in edits.zipWithNext()) {
+      assertTrue(first::class != second::class, "split run")
+      assertTrue(first !is Edit.Insert || second !is Edit.Delete, "insert before delete")
+    }
+    // The encoder's search stays exact: its budget bounds it instead.
+    assertNull(algorithm.diffWithin(source, target, 4_096))
+  }
+
   private fun assertRoundtrip(source: List<String>, target: List<String>) {
     val patch = engine.generatePatch(source, target)
     val recovered = engine.applyPatch(source, patch)
