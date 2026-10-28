@@ -63,18 +63,27 @@ internal actual fun handOver(command: List<String>, environment: Map<String, Str
 private val inherit = ProcessBuilder.Redirect.INHERIT
 
 private fun start(builder: ProcessBuilder): Process {
-  val program = builder.command().first()
+  val command = builder.command()
+  val program = command.first()
   // Java says only "error=2" for a program that is not there, and nothing more specific than an
   // IOException, so whether it is there is asked first.
-  if (File(program).parent == null && !onPath(program)) throw ProgramNotFoundException(program)
+  if (File(program).parent == null) {
+    if (isWindows) {
+      // Given a name alone, Windows would look in the working directory before anywhere else, so
+      // the file to start is found here and named in full. The list is the builder's own.
+      command[0] = windowsProgram(program, System.getenv("SystemRoot"), System.getenv("PATH")) {
+        it.toFile().isFile
+      }?.toString() ?: throw ProgramNotFoundException(program)
+    } else if (!onPath(program)) {
+      throw ProgramNotFoundException(program)
+    }
+  }
   return builder.start()
 }
 
-private fun onPath(program: String): Boolean {
-  val names = if (isWindows) listOf("$program.exe", program) else listOf(program)
-  return System.getenv("PATH").orEmpty().split(File.pathSeparatorChar)
-    .any { dir -> dir.isNotEmpty() && names.any { File(dir, it).canExecute() } }
-}
+private fun onPath(program: String): Boolean =
+  System.getenv("PATH").orEmpty().split(File.pathSeparatorChar)
+    .any { dir -> dir.isNotEmpty() && File(dir, program).canExecute() }
 
 internal actual fun makeExecutable(path: Path) {
   path.toFile().setExecutable(true, false)

@@ -5,7 +5,9 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import okio.Path
 
 class PlatformTest {
 
@@ -68,4 +70,41 @@ class PlatformTest {
     assertTrue(platform in names, platform)
     assertEquals(isWindows, platform.startsWith("windows"))
   }
+
+  @Test
+  fun findsAWindowsProgramInSystem32BeforeThePath() {
+    val found = windowsProgram("curl", "C:\\WINDOWS", "C:\\tools;D:\\bin") {
+      it.windows in setOf("C:\\WINDOWS\\System32\\curl.exe", "C:\\tools\\curl.exe")
+    }
+    assertEquals("C:\\WINDOWS\\System32\\curl.exe", found?.windows)
+  }
+
+  @Test
+  fun findsAWindowsProgramOnThePathInItsOrderWhenWindowsHasNone() {
+    val path = "C:\\tools;\"C:\\Program Files\\Git\\usr\\bin\";D:/bin"
+    val found = windowsProgram("tar", "C:\\WINDOWS", path) {
+      it.windows in setOf("C:\\Program Files\\Git\\usr\\bin\\tar.exe", "D:\\bin\\tar.exe")
+    }
+    assertEquals("C:\\Program Files\\Git\\usr\\bin\\tar.exe", found?.windows)
+  }
+
+  @Test
+  fun neverLooksForAWindowsProgramInTheWorkingDirectory() {
+    // Every entry here is relative to it, as the directory itself is.
+    val relative = ".;;sub;.\\sub;\\fromroot;C:nodir;\"\""
+    assertNull(windowsProgram("curl", null, relative) { true })
+    assertNull(windowsProgram("curl", "", relative) { true })
+    val asked = mutableListOf<String>()
+    assertNull(windowsProgram("curl", "C:\\WINDOWS", relative) { asked += it.windows; false })
+    assertEquals(listOf("C:\\WINDOWS\\System32\\curl.exe"), asked)
+  }
+
+  @Test
+  fun keepsTheExtensionAWindowsProgramIsNamedWith() {
+    val found = windowsProgram("cmd.exe", "C:\\WINDOWS", null) { true }
+    assertEquals("C:\\WINDOWS\\System32\\cmd.exe", found?.windows)
+  }
+
+  /** This path as Windows writes it, whatever slash okio chose for it on this platform. */
+  private val Path.windows: String get() = toString().replace('/', '\\')
 }

@@ -69,3 +69,29 @@ internal expect fun makeExecutable(path: Path)
 /** There is no program at all by the name a command starts with. */
 internal class ProgramNotFoundException(val program: String) :
   okio.IOException("$program was not found")
+
+/**
+ * The file Windows should start for [program], a bare name such as `curl` or `cmd.exe`, or null
+ * when there is none: `%SystemRoot%\System32`, where Windows's own curl, tar and cmd.exe are, is
+ * looked in first, and then each directory on the PATH, [path], that is named from a root.
+ *
+ * The working directory is never looked in, though it is where CreateProcess and cmd.exe look
+ * first when given a name alone: `kiff --use` run inside a directory someone else wrote, with a
+ * curl.exe of its own in it, must not run that. Nor is a PATH entry relative to it.
+ */
+internal fun windowsProgram(
+  program: String,
+  systemRoot: String?,
+  path: String?,
+  exists: (Path) -> Boolean
+): Path? {
+  val name = if (program.endsWith(".exe", ignoreCase = true)) program else "$program.exe"
+  val system = systemRoot?.takeIf { it.isNotBlank() }?.let { "$it\\System32" }
+  // cmd.exe takes a PATH entry in quotes, so one may be written that way.
+  val directories = listOfNotNull(system) +
+    path.orEmpty().split(';').map { it.trim().removeSurrounding("\"") }
+  return directories
+    .filter { isAbsolutePath(it, windows = true) }
+    .map { platformPath(it, windows = true) / name }
+    .firstOrNull(exists)
+}
