@@ -186,9 +186,13 @@ class ReleaseCommand : KiffCommand(name = "release") {
 
   /** Restores [patch] as an updater would, and holds the result to the target's own hash. */
   private fun verify(source: String, patch: String, expected: Fingerprint) {
-    // Outside --out, so a run that is killed leaves nothing there for an upload to pick up.
-    val restored = temporaryDirectory /
-      "kiff-verify-${Random.nextLong().toULong().toString(16)}.tmp"
+    // Outside --out, so a run that is killed leaves nothing there for an upload to pick up; and in
+    // a directory made for it, so that nothing already under the name in a shared temporary
+    // directory - a file, or a link to one - is what gets replaced.
+    val scratch = temporaryDirectory /
+      "kiff-verify-${Random.nextLong().toULong().toString(16)}"
+    systemFileSystem.createDirectory(scratch, mustCreate = true)
+    val restored = scratch / "restored.tmp"
     try {
       Kiff.applyPatch(source, patch, restored.toString())
       val result = fingerprint(restored.toString())
@@ -198,7 +202,7 @@ class ReleaseCommand : KiffCommand(name = "release") {
         )
       }
     } finally {
-      systemFileSystem.delete(restored, mustExist = false)
+      systemFileSystem.deleteRecursively(scratch, mustExist = false)
     }
   }
 

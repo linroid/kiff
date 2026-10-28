@@ -204,6 +204,11 @@ match() {
     if [[ -z $name || $name == *.kiff || $name == "$manifest" ]]; then
       continue
     fi
+    # An asset is downloaded to a file of its name. GitHub gives assets plain names, but the
+    # download should not depend on it.
+    if [[ $name == */* || $name == *\\* || $name == . || $name == .. ]]; then
+      fail "Release asset '$name' has a name that is not a file name."
+    fi
     # shellcheck disable=SC2053 # The pattern is a glob, so it is left unquoted.
     if [[ $name == $1 ]]; then
       found+=("$id"$'\t'"$size"$'\t'"$name")

@@ -101,7 +101,10 @@ internal class KiffVersions(
     val release = "${baseUrl.trimEnd('/')}/v$version"
     val scratch = temporaryDirectory / "kiff-${randomName()}"
     try {
-      fileSystem.createDirectories(scratch)
+      // Made new rather than reused: in a shared temporary directory, a directory already there
+      // under that name is someone else's, and what is downloaded into it would be theirs to
+      // replace.
+      fileSystem.createDirectory(scratch, mustCreate = true)
       val download = Download(scratch, version)
       if (platform != null) {
         val name = "kiff-$version-$platform"
@@ -467,6 +470,9 @@ internal fun interface Fetcher {
  * the size of a native kiff for a command most runs never use.
  */
 internal object Curl : Fetcher {
+  /** Larger than any release asset by an order of magnitude. */
+  private const val MAX_DOWNLOAD = 512L * 1024 * 1024
+
   override fun fetch(url: String, file: Path): Fetched {
     val directory = file.parent!!
     val status = directory / ".${file.name}.status"
@@ -476,9 +482,14 @@ internal object Curl : Fetcher {
         listOf(
           "curl", "--fail", "--silent", "--show-error", "--location",
           // A release's download answers with a redirect to wherever GitHub stores the file, and
-          // nowhere it could send curl but another web address is one to follow.
-          "--proto", "=http,https", "--proto-redir", "=http,https",
-          "--connect-timeout", "30",
+          // nowhere it could send curl but another web address is one to follow - and a download
+          // that began encrypted stays so. Plain http is for a mirror named as such.
+          "--proto", "=http,https",
+          "--proto-redir", if (url.startsWith("https://")) "=https" else "=http,https",
+          // Gives up on a connection that has stalled, and on a file no release could hold, rather
+          // than waiting or filling the disk for a mirror that misbehaves.
+          "--connect-timeout", "30", "--speed-limit", "1", "--speed-time", "120",
+          "--max-filesize", MAX_DOWNLOAD.toString(),
           "--output", file.toString(),
           "--write-out", "%{http_code}",
           url

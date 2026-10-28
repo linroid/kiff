@@ -177,12 +177,24 @@ check_link() {
 
 # --- Download and install ---------------------------------------------------
 
+# Sets REDIRECTS to the protocols curl may follow a redirect to from $1: a download that began
+# over https stays so, while a mirror named over http, as the tests name one, may redirect freely.
+REDIRECTS=""
+redirects_for() {
+  case "$1" in
+    https://*) REDIRECTS="=https" ;;
+    *) REDIRECTS="=http,https" ;;
+  esac
+}
+
 # Downloads ${1}.sha256 to $2 and sets CHECKSUM to its hash, which must be on the line sha256sum
 # writes for the file named $3. Returns 1 when there is no such file, and fails on anything else.
 CHECKSUM=""
 fetch_checksum() {
   local url="$1" file="$2" name="$3" status
-  status="$(curl -sSL -o "$file" -w '%{http_code}' "${url}.sha256")" || status=000
+  redirects_for "$url"
+  status="$(curl -sSL --proto-redir "$REDIRECTS" -o "$file" -w '%{http_code}' "${url}.sha256")" \
+    || status=000
   case "$status" in
     200) ;;
     404) return 1 ;;
@@ -203,7 +215,8 @@ fetch_checksum() {
 fetch_checked() {
   local url="$1" file="$2" expected="$3" actual
   info "Downloading ${url}"
-  if ! curl -fSL --progress-bar -o "$file" "$url"; then
+  redirects_for "$url"
+  if ! curl -fSL --proto-redir "$REDIRECTS" --progress-bar -o "$file" "$url"; then
     error "Download failed: ${url}."
   fi
   actual="$(sha256_of "$file")"
@@ -319,12 +332,24 @@ install_version() {
       ;;
     jvm)
       info "Extracting..."
+      # Checked as an archive is, from its listing, before anything of it touches the disk.
+      local entries outside
+      entries="$(unzip -Z1 "${DOWNLOAD_DIR}/${name}")" \
+        || error "${release}/${name} is not a zip unzip can read."
+      outside="$(entry_outside "kiff-${version}" <<<"$entries")"
+      if [ -n "$outside" ]; then
+        error "${release}/${name} holds ${outside}, which is outside its kiff-${version} directory."
+      fi
       unzip -q "${DOWNLOAD_DIR}/${name}" -d "$UNPACK_DIR"
       if [ ! -f "${unpacked}/bin/${BINARY_NAME}" ]; then
         error "${release}/${name} holds no kiff-${version}/bin/${BINARY_NAME}."
       fi
       ;;
   esac
+  # Links would make the chmod reach outside what was unpacked, and no release holds any.
+  if [ -n "$(find "${unpacked}/bin" -type l | head -n 1)" ]; then
+    error "${release}/${name} holds a link in bin, which no release does."
+  fi
   chmod a+x "${unpacked}/bin/"*
 
   # Given its final name first, so that moving it into $versions fails rather than nesting it when
