@@ -69,10 +69,12 @@ internal actual fun homeDirectory(): String =
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun runCommand(command: List<String>, stdout: Path?, stderr: Path?): Int =
   memScoped {
+    val program = command.first()
+    val file = trustedProgram(program)
     val output = stdout?.let { createInheritable(it) }
     val error = stderr?.let { createInheritable(it) }
     try {
-      start(windowsCommandLine(command), command.first(), output, error)
+      start(file, windowsCommandLine(command), program, output, error)
     } finally {
       output?.let { CloseHandle(it) }
       error?.let { CloseHandle(it) }
@@ -84,24 +86,49 @@ internal actual fun handOver(command: List<String>, environment: Map<String, Str
   for ((name, value) in environment) SetEnvironmentVariableW(name, value)
   val program = command.first()
   // A JVM release's launcher is a batch file, which only cmd.exe runs. With /s it takes what is
-  // between the outer quotes as the line, and /v:off keeps a ! in it from being expanded.
-  val line = if (program.endsWith(".bat", ignoreCase = true)) {
-    "cmd.exe /d /v:off /s /c \"" + batchCommandLine(command) + "\""
+  // between the outer quotes as the line, and /v:off keeps a ! in it from being expanded. The
+  // launcher itself is a path into the install, so it is started as it is.
+  val (file, line) = if (program.endsWith(".bat", ignoreCase = true)) {
+    trustedProgram("cmd.exe") to "cmd.exe /d /v:off /s /c \"" + batchCommandLine(command) + "\""
   } else {
-    windowsCommandLine(command)
+    program to windowsCommandLine(command)
   }
-  return memScoped { start(line, program, null, null) }
+  return memScoped { start(file, line, program, null, null) }
+}
+
+/**
+ * The file to start for [program]: a path as it is, and a bare name such as `curl` found through
+ * [windowsProgram], since given the name alone CreateProcessW would look in the working directory
+ * before anywhere else.
+ *
+ * @throws ProgramNotFoundException when a bare name is nowhere.
+ */
+private fun trustedProgram(program: String): String {
+  if (program.any { it == '\\' || it == '/' }) return program
+  return windowsProgram(program, environment("SystemRoot"), environment("PATH")) {
+    systemFileSystem.exists(it)
+  }?.toString() ?: throw ProgramNotFoundException(program)
 }
 
 /** Nothing to do: Windows runs a file by its extension, not a mode bit. */
 internal actual fun makeExecutable(path: Path) = Unit
 
 /**
- * Starts the command [line] runs, [program], waits for it and answers its exit status, with its
- * output in [output] and [error] when they are given.
+ * Starts [file] with the command [line], as the program [program] the caller named, waits for it
+ * and answers its exit status, with its output in [output] and [error] when they are given.
+ *
+ * [file] is the file to start and nothing else: given as the application name, CreateProcessW
+ * neither searches for it nor reads it out of the line, whose first word is only what the
+ * program sees as its own name.
  */
 @OptIn(ExperimentalForeignApi::class)
-private fun MemScope.start(line: String, program: String, output: HANDLE?, error: HANDLE?): Int {
+private fun MemScope.start(
+  file: String,
+  line: String,
+  program: String,
+  output: HANDLE?,
+  error: HANDLE?
+): Int {
   val startup = alloc<STARTUPINFOW>()
   startup.cb = sizeOf<STARTUPINFOW>().convert()
   if (output != null || error != null) {
@@ -114,7 +141,7 @@ private fun MemScope.start(line: String, program: String, output: HANDLE?, error
   // CreateProcessW may write to the command line it is given, so it gets a copy of its own.
   val buffer = line.wcstr.getPointer(this)
   val started = CreateProcessW(
-    null, buffer, null, null, TRUE, 0u, null, null, startup.ptr, process.ptr
+    file, buffer, null, null, TRUE, 0u, null, null, startup.ptr, process.ptr
   )
   if (started == 0) {
     val code = GetLastError()
