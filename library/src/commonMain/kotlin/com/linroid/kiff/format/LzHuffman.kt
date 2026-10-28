@@ -170,57 +170,73 @@ internal object LzHuffman {
   /**
    * What the match finder found, kept as symbols rather than bytes because the Huffman trees have
    * to be built from the whole stream before any of it can be written.
+   *
+   * Literals are the bulk of it, so each is kept as the byte it is, in one array; a match is three
+   * ints, in another, the first of which says how many literals come before it. Kept as five ints
+   * per token, incompressible content cost twenty bytes of tokens per byte of input, which put the
+   * peak of packing a large stream in the gigabytes.
    */
   private class Tokens(size: Int) {
     val literalFrequencies = IntArray(LITERAL_SYMBOLS)
     val distanceFrequencies = IntArray(DISTANCE_SYMBOLS)
 
-    // Literals and matches, in order: a literal as its byte, a match as its two symbols and extras.
-    private var symbols = IntArray(maxOf(64, size / 2))
-    private var count = 0
+    private var literals = ByteArray(maxOf(64, size / 8))
+    private var literalCount = 0
+
+    // Per match: the number of literals before it, its length and its distance.
+    private var matches = IntArray(3 * maxOf(16, size / 256))
+    private var matchCount = 0
 
     init {
       literalFrequencies[END] = 1
     }
 
     fun literal(byte: Int) {
-      add(byte); add(-1); add(0); add(0); add(0)
+      if (literalCount == literals.size) literals = literals.copyOf(grown(literals.size))
+      literals[literalCount++] = byte.toByte()
       literalFrequencies[byte]++
     }
 
     fun match(length: Int, distance: Int) {
-      val lengthIndex = lengthIndexOf(length)
-      val symbol = LITERALS + 1 + lengthIndex
-      val distanceIndex = distanceIndexOf(distance)
-      add(symbol)
-      add(distanceIndex)
-      add(LENGTH_EXTRA[lengthIndex])
-      add(length - LENGTH_BASE[lengthIndex])
-      add(distance - DISTANCE_BASE[distanceIndex])
-      literalFrequencies[symbol]++
-      distanceFrequencies[distanceIndex]++
+      if (matchCount + 3 > matches.size) matches = matches.copyOf(grown(matches.size))
+      matches[matchCount++] = literalCount
+      matches[matchCount++] = length
+      matches[matchCount++] = distance
+      literalFrequencies[LITERALS + 1 + lengthIndexOf(length)]++
+      distanceFrequencies[distanceIndexOf(distance)]++
     }
 
+    /**
+     * Every token in order: its symbol, the extra bits a length carries and their value, and for a
+     * match its distance symbol and that symbol's extra bits and value; -1 for a literal's.
+     */
     inline fun replay(emit: (Int, Int, Int, Int, Int, Int) -> Unit) {
+      var literal = 0
       var at = 0
-      while (at < count) {
-        val symbol = symbols[at]
-        val distanceSymbol = symbols[at + 1]
-        val extraBits = symbols[at + 2]
-        val extraValue = symbols[at + 3]
-        val distanceExtra = symbols[at + 4]
+      while (at < matchCount) {
+        val before = matches[at]
+        while (literal < before) emit(literals[literal++].toInt() and 0xFF, 0, 0, -1, 0, 0)
+        val length = matches[at + 1]
+        val distance = matches[at + 2]
+        val lengthIndex = lengthIndexOf(length)
+        val distanceIndex = distanceIndexOf(distance)
         emit(
-          symbol, extraBits, extraValue, distanceSymbol,
-          if (distanceSymbol >= 0) DISTANCE_EXTRA[distanceSymbol] else 0,
-          distanceExtra
+          LITERALS + 1 + lengthIndex, LENGTH_EXTRA[lengthIndex], length - LENGTH_BASE[lengthIndex],
+          distanceIndex, DISTANCE_EXTRA[distanceIndex], distance - DISTANCE_BASE[distanceIndex]
         )
-        at += 5
+        at += 3
       }
+      while (literal < literalCount) emit(literals[literal++].toInt() and 0xFF, 0, 0, -1, 0, 0)
     }
 
-    private fun add(value: Int) {
-      if (count == symbols.size) symbols = symbols.copyOf(symbols.size * 2)
-      symbols[count++] = value
+    /** The next capacity after [capacity], or a refusal where no array could hold it. */
+    private fun grown(capacity: Int): Int {
+      if (capacity >= LARGEST_ARRAY) {
+        throw KiffException.UnsupportedInput(
+          "Content of $capacity tokens is more than the packer can hold at once"
+        )
+      }
+      return if (capacity > LARGEST_ARRAY - capacity / 2) LARGEST_ARRAY else capacity + capacity / 2
     }
   }
 
@@ -511,6 +527,9 @@ internal object LzHuffman {
   private const val HASH_BITS = 17
   private const val HASH_SIZE = 1 shl HASH_BITS
   private const val MAX_CHAIN = 24
+
+  /** The most elements an array may hold on any platform. */
+  private const val LARGEST_ARRAY = Int.MAX_VALUE - 8
 
   private val LENGTH_BASE = intArrayOf(
     4, 5, 6, 7, 8, 9, 10, 11,

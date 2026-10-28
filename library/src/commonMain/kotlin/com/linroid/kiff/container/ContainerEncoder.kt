@@ -243,19 +243,17 @@ internal class ContainerEncoder(
 
     // A columns region's node sits a level below it, so it needs room for one more.
     val columns = child.columns?.takeIf { depth < MAX_REGION_DEPTH }
-    val flatScratch = scratchFor(targetTo - targetFrom)
-    val flat = leaf(
-      name, kind, sourceFrom, sourceTo, targetFrom, targetTo, flatScratch,
+    val flat = chooseLeaf(
+      name, kind, sourceFrom, sourceTo, targetFrom, targetTo,
       groups.scannerFor(child.group), columns
     )
-    val flatBytes = flatScratch.toByteArray()
 
-    if (decomposed != null && decomposed.cost() < Candidate(flat, flatBytes).cost()) {
+    if (decomposed != null && decomposed.cost < flat.cost) {
       literals.writeBytes(decomposed.literals)
       return Built(decomposed.node, decomposed.costs)
     }
-    literals.writeBytes(flatBytes)
-    return Built(flat, emptyList())
+    literals.writeBytes(flat.literals)
+    return Built(flat.node, emptyList())
   }
 
   /** Builds the decomposed form of a range into its own buffer, so it can be weighed and dropped. */
@@ -320,13 +318,7 @@ internal class ContainerEncoder(
     )
   }
 
-  /**
-   * Describes one range that is not decomposed further.
-   *
-   * The plan is a shortlist, not a verdict: where it nominates something other than bytes, both are
-   * built and the smaller wins, and neither is kept if storing the bytes outright would have been
-   * smaller still. A planner can therefore only ever cost encode time, never patch size.
-   */
+  /** Describes one range that is not decomposed further, as [chooseLeaf] chooses to. */
   private fun leaf(
     name: String,
     kind: RegionKind,
@@ -338,9 +330,35 @@ internal class ContainerEncoder(
     shared: DeltaScanner? = null,
     columns: List<Int>? = null
   ): RegionNode {
+    val chosen = chooseLeaf(name, kind, sourceFrom, sourceTo, targetFrom, targetTo, shared, columns)
+    literals.writeBytes(chosen.literals)
+    return chosen.node
+  }
+
+  /**
+   * Chooses how to describe one range that is not decomposed further.
+   *
+   * The plan is a shortlist, not a verdict: where it nominates something other than bytes, both are
+   * built and the smaller wins, and neither is kept if storing the bytes outright would have been
+   * smaller still. A planner can therefore only ever cost encode time, never patch size.
+   *
+   * What comes back is a candidate rather than a node, so a caller that goes on to weigh it against
+   * something else, as [describe] does, weighs what was already measured here: a candidate packs
+   * its content once however many times it is asked what that costs.
+   */
+  private fun chooseLeaf(
+    name: String,
+    kind: RegionKind,
+    sourceFrom: Long,
+    sourceTo: Long,
+    targetFrom: Long,
+    targetTo: Long,
+    shared: DeltaScanner? = null,
+    columns: List<Int>? = null
+  ): Candidate {
     val span = targetTo - targetFrom
     if (identical(sourceFrom, targetFrom, span, sourceTo - sourceFrom)) {
-      return copyNode(sourceFrom, span)
+      return Candidate(copyNode(sourceFrom, span), EMPTY)
     }
     val info = RegionInfo(
       name = name,
@@ -351,25 +369,34 @@ internal class ContainerEncoder(
         looksLikeText(target, targetFrom, targetTo)
     )
     val plan = planner.plan(info)
-    if (plan == RegionAlgorithm.RAW) return raw(targetFrom, targetTo, literals)
+    if (plan == RegionAlgorithm.RAW) return stored(targetFrom, targetTo)
 
     var best = binaryCandidate(span, sourceFrom, sourceTo, targetFrom, targetTo, shared)
     if (plan == RegionAlgorithm.TEXT) {
       val text = textCandidate(span, sourceFrom, sourceTo, targetFrom, targetTo)
-      if (text != null && text.cost() < best.cost()) best = text
+      if (text != null && text.cost < best.cost) best = text
     }
     // A table only its format could recognise gets one more way of being read.
     if (columns != null) {
       val rearranged = columnsCandidate(span, sourceFrom, sourceTo, targetFrom, targetTo, columns)
-      if (rearranged != null && rearranged.cost() < best.cost()) best = rearranged
+      if (rearranged != null && rearranged.cost < best.cost) best = rearranged
     }
 
-    if (!beatsStoringTarget(best.node.structureBytes(), best.literals, targetFrom, targetTo)) {
-      return raw(targetFrom, targetTo, literals)
-    }
-    literals.writeBytes(best.literals)
-    return best.node
+    // Storing is only built once the unpacked sizes have not settled it, and then its packed size
+    // is kept with it, for whoever weighs the stored bytes next.
+    val stored by lazy { stored(targetFrom, targetTo) }
+    val kept = beatsStoring(
+      best.node.structureBytes(), best.literals.size, { best.packed },
+      span.toInt(), { stored.packed }
+    )
+    return if (kept) best else stored
   }
+
+  /** The target's bytes as they are: what every other candidate has to beat. */
+  private fun stored(targetFrom: Long, targetTo: Long) = Candidate(
+    RegionNode.Raw(targetTo - targetFrom),
+    target.copyOfRange(targetFrom.toInt(), targetTo.toInt())
+  )
 
   /**
    * [shared] is the index for this region's group, when it has one. The alignment still points at
@@ -675,16 +702,22 @@ internal class ContainerEncoder(
     val literals: ByteArray,
     val costs: List<RegionCost> = emptyList()
   ) {
-    fun cost(): Long {
-      val packed = LzHuffman.estimate(literals)
+    /**
+     * About what [literals] pack to. Measured once: it is a full pass of matching, and the same
+     * candidate is weighed against each alternative in turn, and then against storing its bytes.
+     */
+    val packed: Int by lazy { LzHuffman.estimate(literals) }
+
+    val cost: Long by lazy {
       val share = maxOf(0, packed - LzHuffman.tableBytes)
       val alone = minOf(literals.size, packed)
-      return 2 * node.structureBytes() + share + alone
+      2 * node.structureBytes() + share + alone
     }
   }
 
   private companion object {
     const val WHOLE_FILE = "(whole file)"
+    val EMPTY = ByteArray(0)
     const val MIN_SEARCHABLE = 64 * 1024
 
     /** How far into a region the NUL check looks before it accepts the bytes as text. */
