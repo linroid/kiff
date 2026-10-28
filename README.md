@@ -104,7 +104,8 @@ Without the script, download the archive for your platform from the
 `kiff-<version>-linux-x64.tar.gz`, `kiff-<version>-linux-arm64.tar.gz`,
 `kiff-<version>-macos-arm64.tar.gz`, `kiff-<version>-macos-x64.tar.gz` or
 `kiff-<version>-windows-x64.zip`. Each holds a `kiff-<version>-<platform>` directory with `kiff`
-(`kiff.exe` for Windows), `LICENSE` and `README.md`. Check it against the `.sha256` beside it,
+(`kiff.exe` for Windows), `LICENSE` and `README.md`. Check it against the `.sha256` beside it -
+which guards against a corrupt download, not a substituted one, since both come from the release -
 unpack it with `tar -xzf`, or on Windows with `tar -xf` or Explorer, and put that `kiff` on your
 `PATH`. The `.tar.gz` keeps `kiff` executable. macOS refuses a file a browser downloaded until
 `xattr -d com.apple.quarantine kiff` clears the flag, which curl does not set. On any other
@@ -398,7 +399,9 @@ installed. It takes the executable built for this machine, with `PLATFORM` one o
 `kiff-VERSION-PLATFORM.tar.gz`, unpacked with the system's `tar`, or `kiff-VERSION-windows-x64.zip`;
 failing that, bare, as 0.2.0 attached it, `kiff-VERSION-PLATFORM` (`.exe` for Windows); and
 otherwise `kiff-VERSION.zip`, the JVM build, as for 0.1.0, which has no other. Whichever it takes
-is refused unless it matches the `.sha256` beside it, as is an archive with anything outside its
+is refused unless it matches the `.sha256` beside it (a guard against corruption rather than
+substitution: the checksum comes from the same release as the file), as is an archive with anything
+outside its
 `kiff-VERSION-PLATFORM` directory, and the executable is installed as
 `$KIFF_HOME/versions/VERSION/bin/kiff`, with `KIFF_HOME` at `~/.kiff` unless set. It is put
 together beside that directory and renamed into place, so an interrupted or concurrent run never

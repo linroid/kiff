@@ -31,12 +31,16 @@ releases=${releases%/}
 # Downloads $1 to $2 and its checksum beside it, and fails unless they agree. Returns 1, leaving
 # missing set to what could not be downloaded, when either is not there.
 download() {
-  local url=$1 file=$2 expected actual
-  if ! curl -fsSL --retry 3 -o "$file.sha256" "$url.sha256"; then
+  local url=$1 file=$2 expected actual redir='=http,https'
+  # A download that began over https stays so; the tests' mirror on plain http may redirect freely.
+  if [[ $url == https://* ]]; then
+    redir='=https'
+  fi
+  if ! curl -fsSL --retry 3 --proto-redir "$redir" -o "$file.sha256" "$url.sha256"; then
     missing=$url.sha256
     return 1
   fi
-  if ! curl -fsSL --retry 3 -o "$file" "$url"; then
+  if ! curl -fsSL --retry 3 --proto-redir "$redir" -o "$file" "$url"; then
     missing=$url
     return 1
   fi
@@ -129,7 +133,7 @@ install_zip() {
     kiff=''
     return 0
   fi
-  unzip -q -o "$dir/$zip" -d "$dir"
+  unpack "$dir/$zip" "kiff-$version" "$releases/v$version/$zip" "$dir"
   if [[ ! -x $kiff ]]; then
     fail "$releases/v$version/$zip holds no kiff-$version/bin/kiff."
   fi
