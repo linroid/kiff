@@ -21,13 +21,19 @@ internal fun SeekableSource.materialize(label: String): ByteArraySource {
 
 /** Refuses a source [materialize] could not hold, without reading any of it. */
 internal fun SeekableSource.requireIndexable(label: String) {
-  if (size > Int.MAX_VALUE) {
+  if (size > LARGEST_ARRAY) {
     throw KiffException.UnsupportedInput(
-      "$label is ${size} bytes; the bundled algorithm indexes at most ${Int.MAX_VALUE}. " +
+      "$label is ${size} bytes; the bundled algorithm indexes at most $LARGEST_ARRAY. " +
         "The patch format addresses more, but a streaming search is not implemented yet."
     )
   }
 }
+
+/**
+ * The largest array every platform Kiff runs on can allocate: a JVM keeps a few words of an
+ * array's `Int.MAX_VALUE` for its header.
+ */
+internal const val LARGEST_ARRAY = Int.MAX_VALUE - 8
 
 /** Fails loudly rather than silently truncating when a 64-bit value has to index an array. */
 internal fun Long.toIntIndex(what: String): Int {

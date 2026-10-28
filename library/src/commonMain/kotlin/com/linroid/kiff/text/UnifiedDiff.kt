@@ -328,6 +328,10 @@ public object UnifiedDiff {
           repeat(2) {
             if (i < field.length && field[i] in '0'..'7') value = value * 8 + (field[i++] - '0')
           }
+          // Three octal digits reach 511, and a byte stops at 377; git refuses the rest too.
+          if (value > 0xFF) {
+            throw KiffException.InvalidPatch("Octal escape past \\377 in quoted name: $field")
+          }
           value
         }
         else -> throw KiffException.InvalidPatch("Unknown escape in quoted name: $field")

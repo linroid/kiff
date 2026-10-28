@@ -58,9 +58,6 @@ public object KiffFiles {
       "read whole"
   )
 
-  /** The largest array every platform Kiff runs on can allocate. */
-  private const val LARGEST_ARRAY = Int.MAX_VALUE - 8
-
   public fun writeBytes(path: String, bytes: ByteArray) {
     replace(path) { write(bytes) }
   }
@@ -103,10 +100,11 @@ public object KiffFiles {
   private fun replace(path: String, contents: BufferedSink.() -> Unit) {
     val requested = path.toPath()
     // Through a symlink to the file it names, so the link survives an update in place. A link to
-    // nothing is replaced like any other missing file.
-    val destination = when {
-      systemFileSystem.exists(requested) -> systemFileSystem.canonicalize(requested)
-      else -> requested
+    // nothing cannot be resolved, and is replaced like any other missing file.
+    val destination = try {
+      systemFileSystem.canonicalize(requested)
+    } catch (e: IOException) {
+      requested
     }
     val existing = systemFileSystem.metadataOrNull(destination)
     // Both found out before anything is written, rather than after a whole restore.

@@ -361,13 +361,29 @@ internal object PatchPayload {
       it.literalCursor = literalCursor
     }
 
-    /** Reads a source range in, for the encodings that cannot work a chunk at a time. */
+    private var lastFrom = -1L
+    private var last: ByteArray? = null
+
+    /**
+     * Reads a source range in, for the encodings that cannot work a chunk at a time.
+     *
+     * The last range read is kept, and handed back when the next region names the same one: a
+     * patch may name a range as often as it likes, and the cheapest way to make a reader work is
+     * to name the whole source from every region. Only an identical range is caught - the bound
+     * on a patch that names a different large range each time is the one FORMAT.md states.
+     */
     fun read(from: Long, length: Long, what: String): ByteArray {
       if (from < 0 || length < 0 || length > source.size - from) {
         throw KiffException.InvalidPatch("$what region names a source range outside the source")
       }
-      val bytes = ByteArray(length.withinVersionOne("$what source length"))
+      val count = length.withinVersionOne("$what source length")
+      last?.let { if (lastFrom == from && it.size == count) return it }
+      // Let go before the next is allocated, so two ranges are never held at once.
+      last = null
+      val bytes = ByteArray(count)
       source.readFully(from, bytes)
+      lastFrom = from
+      last = bytes
       return bytes
     }
   }

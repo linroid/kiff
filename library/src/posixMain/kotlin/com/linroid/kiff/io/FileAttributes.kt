@@ -21,8 +21,10 @@ internal actual fun copyPermissions(from: Path, to: Path) {
   memScoped {
     val info = alloc<stat>()
     if (stat(from.toString(), info.ptr) != 0) return
-    // The permission, setuid, setgid and sticky bits; the rest of the mode is the file's type.
-    chmod(to.toString(), (info.st_mode.toInt() and 0xFFF).convert())
+    // The nine permission bits, as the JVM carries over. The setuid, setgid and sticky bits are
+    // not: a kernel clears the first two on the write anyway, and a new file should not inherit a
+    // privilege from the one it replaces.
+    chmod(to.toString(), (info.st_mode.toInt() and 0x1FF).convert())
   }
 }
 
