@@ -84,6 +84,24 @@ class LzHuffmanTest {
   }
 
   @Test
+  fun tokensOutgrowWhatTheyStartedWith() {
+    // Noise is all literals, and the token store starts with room for an eighth of the input: it
+    // grows several times. Short phrases copied from just before are nearly all matches, far more
+    // than it starts with room for, so the matches outgrow theirs too.
+    roundTrip(Random(4).nextBytes(2_000_000), "two megabytes of noise")
+    val random = Random(5)
+    val phrases = List(64) { random.nextBytes(8) }
+    val copied = ByteArray(1_600_000)
+    var at = 0
+    while (at < copied.size) {
+      val phrase = phrases[random.nextInt(phrases.size)]
+      phrase.copyInto(copied, at, 0, minOf(phrase.size, copied.size - at))
+      at += phrase.size
+    }
+    roundTrip(copied, "phrases copied from nearby")
+  }
+
+  @Test
   fun aLongerMatchOneByteOnIsWorthALiteral() {
     // Each line of the second half is a marker byte and a phrase from the first half. The marker
     // and the phrase's first three bytes were also seen together, so matching greedily takes those

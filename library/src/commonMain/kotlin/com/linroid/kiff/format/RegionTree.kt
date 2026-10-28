@@ -221,10 +221,25 @@ internal fun beatsStoring(
   target: ByteArray,
   from: Int,
   to: Int
+): Boolean = beatsStoring(
+  structure, candidate.size, { LzHuffman.estimate(candidate) },
+  to - from, { LzHuffman.estimate(target.copyOfRange(from, to)) }
+)
+
+/**
+ * [beatsStoring] with the packed sizes asked for rather than measured, for a caller that already
+ * weighed its candidate packed, or will weigh the stored bytes again: estimating is a full pass
+ * of matching, and each is asked for once at most.
+ */
+internal inline fun beatsStoring(
+  structure: Long,
+  candidateSize: Int,
+  packedCandidate: () -> Int,
+  storedSize: Int,
+  packedStored: () -> Int
 ): Boolean {
-  if (structure + candidate.size <= to - from) return true
-  val raw = target.copyOfRange(from, to)
-  return structure + LzHuffman.estimate(candidate) < LzHuffman.estimate(raw)
+  if (structure + candidateSize <= storedSize) return true
+  return structure + packedCandidate() < packedStored()
 }
 
 /**
